@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait, concat_bytes)]
 #![deny(unused_must_use)]
 
 // This mod MUST go first, so that the others see its macros.
@@ -23,7 +22,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{block_for, Duration, Timer};
 use embedded_hal_1::digital::blocking::OutputPin;
-use embedded_hal_async::spi::{SpiBusRead, SpiBusWrite, SpiDevice};
+use embedded_hal_1::spi::blocking::{SpiBus, SpiBusRead, SpiBusWrite, SpiDevice};
 
 use self::structs::*;
 use crate::events::Event;
@@ -397,6 +396,12 @@ impl<'a> Control<'a> {
         info!("JOINED");
     }
 
+    pub async fn gpio_set(&mut self, gpio_n: u8, gpio_en: bool) {
+        assert!(gpio_n < 3);
+        self.set_iovar_u32x2("gpioout", 1 << gpio_n, if gpio_en { 1 << gpio_n } else { 0 })
+            .await
+    }
+
     async fn set_iovar_u32x2(&mut self, name: &str, val1: u32, val2: u32) {
         let mut buf = [0; 8];
         buf[0..4].copy_from_slice(&val1.to_le_bytes());
@@ -695,14 +700,10 @@ where
 
                     self.spi
                         .transaction(|bus| {
-                            let bus = unsafe { &mut *bus };
-                            async {
-                                bus.write(&[cmd]).await?;
-                                bus.read(&mut buf[..(len as usize + 3) / 4]).await?;
-                                Ok(())
-                            }
+                            bus.write(&[cmd])?;
+                            bus.read(&mut buf[..(len as usize + 3) / 4])?;
+                            Ok(())
                         })
-                        .await
                         .unwrap();
 
                     trace!("rx {:02x}", &slice8_mut(&mut buf)[..(len as usize).min(48)]);
@@ -760,13 +761,10 @@ where
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd]).await?;
-                    bus.write(&buf[..(total_len / 4)]).await?;
-                    Ok(())
-                }
+                bus.write(&[cmd])?;
+                bus.write(&buf[..(total_len / 4)])?;
+                Ok(())
             })
-            .await
             .unwrap();
     }
 
@@ -883,11 +881,12 @@ where
                 let packet = &payload[packet_start..];
                 trace!("rx pkt {:02x}", &packet[..(packet.len() as usize).min(48)]);
 
-                let mut p = unwrap!(embassy_net::PacketBox::new(embassy_net::Packet::new()));
-                p[..packet.len()].copy_from_slice(packet);
+                if let Some(mut p) = embassy_net::PacketBox::new(embassy_net::Packet::new()) {
+                    p[..packet.len()].copy_from_slice(packet);
 
-                if let Err(_) = self.state.rx_channel.try_send(p.slice(0..packet.len())) {
-                    warn!("failed to push rxd packet to the channel.")
+                    if let Err(_) = self.state.rx_channel.try_send(p.slice(0..packet.len())) {
+                        warn!("failed to push rxd packet to the channel.")
+                    }
                 }
             }
             _ => {}
@@ -939,13 +938,10 @@ where
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd]).await?;
-                    bus.write(&buf[..total_len / 4]).await?;
-                    Ok(())
-                }
+                bus.write(&[cmd])?;
+                bus.write(&buf[..total_len / 4])?;
+                Ok(())
             })
-            .await
             .unwrap();
     }
 
@@ -1027,19 +1023,16 @@ where
             self.spi
                 .transaction(|bus| {
                     let bus = unsafe { &mut *bus };
-                    async {
-                        bus.write(&[cmd]).await?;
+                    bus.write(&[cmd])?;
 
-                        // 4-byte response delay.
-                        let mut junk = [0; 1];
-                        bus.read(&mut junk).await?;
+                    // 4-byte response delay.
+                    let mut junk = [0u32; 1];
+                    bus.read(&mut junk)?;
 
-                        // Read data
-                        bus.read(&mut data[..len / 4]).await?;
-                        Ok(())
-                    }
+                    // Read data
+                    bus.read(&mut data[..len / 4])?;
+                    Ok(())
                 })
-                .await
                 .unwrap();
 
             // Advance ptr.
@@ -1072,13 +1065,10 @@ where
             self.spi
                 .transaction(|bus| {
                     let bus = unsafe { &mut *bus };
-                    async {
-                        bus.write(&[cmd]).await?;
-                        bus.write(&buf[..(len + 3) / 4]).await?;
-                        Ok(())
-                    }
+                    bus.write(&[cmd])?;
+                    bus.write(&buf[..(len + 3) / 4])?;
+                    Ok(())
                 })
-                .await
                 .unwrap();
 
             // Advance ptr.
@@ -1192,17 +1182,14 @@ where
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd]).await?;
-                    if func == FUNC_BACKPLANE {
-                        // 4-byte response delay.
-                        bus.read(&mut buf).await?;
-                    }
-                    bus.read(&mut buf).await?;
-                    Ok(())
+                bus.write(&[cmd])?;
+                if func == FUNC_BACKPLANE {
+                    // 4-byte response delay.
+                    bus.read(&mut buf)?;
                 }
+                bus.read(&mut buf)?;
+                Ok(())
             })
-            .await
             .unwrap();
 
         buf[0]
@@ -1214,12 +1201,9 @@ where
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd, val]).await?;
-                    Ok(())
-                }
+                bus.write(&[cmd, val])?;
+                Ok(())
             })
-            .await
             .unwrap();
     }
 
@@ -1230,13 +1214,10 @@ where
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[swap16(cmd)]).await?;
-                    bus.read(&mut buf).await?;
-                    Ok(())
-                }
+                bus.write(&[swap16(cmd)])?;
+                bus.read(&mut buf)?;
+                Ok(())
             })
-            .await
             .unwrap();
 
         swap16(buf[0])
@@ -1248,67 +1229,56 @@ where
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[swap16(cmd), swap16(val)]).await?;
-                    Ok(())
-                }
+                bus.write(&[swap16(cmd), swap16(val)])?;
+                Ok(())
             })
-            .await
             .unwrap();
     }
 }
 
-macro_rules! nvram {
-    ($($s:literal,)*) => {
-        concat_bytes!($($s, b"\x00",)* b"\x00\x00")
-    };
-}
-
-static NVRAM: &'static [u8] = &*nvram!(
-    b"NVRAMRev=$Rev$",
-    b"manfid=0x2d0",
-    b"prodid=0x0727",
-    b"vendid=0x14e4",
-    b"devid=0x43e2",
-    b"boardtype=0x0887",
-    b"boardrev=0x1100",
-    b"boardnum=22",
-    b"macaddr=00:A0:50:b5:59:5e",
-    b"sromrev=11",
-    b"boardflags=0x00404001",
-    b"boardflags3=0x04000000",
-    b"xtalfreq=37400",
-    b"nocrc=1",
-    b"ag0=255",
-    b"aa2g=1",
-    b"ccode=ALL",
-    b"pa0itssit=0x20",
-    b"extpagain2g=0",
-    b"pa2ga0=-168,6649,-778",
-    b"AvVmid_c0=0x0,0xc8",
-    b"cckpwroffset0=5",
-    b"maxp2ga0=84",
-    b"txpwrbckof=6",
-    b"cckbw202gpo=0",
-    b"legofdmbw202gpo=0x66111111",
-    b"mcsbw202gpo=0x77711111",
-    b"propbw202gpo=0xdd",
-    b"ofdmdigfilttype=18",
-    b"ofdmdigfilttypebe=18",
-    b"papdmode=1",
-    b"papdvalidtest=1",
-    b"pacalidx2g=45",
-    b"papdepsoffset=-30",
-    b"papdendidx=58",
-    b"ltecxmux=0",
-    b"ltecxpadnum=0x0102",
-    b"ltecxfnsel=0x44",
-    b"ltecxgcigpio=0x01",
-    b"il0macaddr=00:90:4c:c5:12:38",
-    b"wl0id=0x431b",
-    b"deadman_to=0xffffffff",
-    b"muxenab=0x100",
-    b"spurconfig=0x3",
-    b"glitch_based_crsmin=1",
-    b"btc_mode=1",
-);
+static NVRAM: &[u8] = b"NVRAMRev=$Rev$\x00\
+    manfid=0x2d0\x00\
+    prodid=0x0727\x00\
+    vendid=0x14e4\x00\
+    devid=0x43e2\x00\
+    boardtype=0x0887\x00\
+    boardrev=0x1100\x00\
+    boardnum=22\x00\
+    macaddr=00:A0:50:b5:59:5e\x00\
+    sromrev=11\x00\
+    boardflags=0x00404001\x00\
+    boardflags3=0x04000000\x00\
+    xtalfreq=37400\x00\
+    nocrc=1\x00\
+    ag0=255\x00\
+    aa2g=1\x00\
+    ccode=ALL\x00\
+    pa0itssit=0x20\x00\
+    extpagain2g=0\x00\
+    pa2ga0=-168,6649,-778\x00\
+    AvVmid_c0=0x0,0xc8\x00\
+    cckpwroffset0=5\x00\
+    maxp2ga0=84\x00\
+    txpwrbckof=6\x00\
+    cckbw202gpo=0\x00\
+    legofdmbw202gpo=0x66111111\x00\
+    mcsbw202gpo=0x77711111\x00\
+    propbw202gpo=0xdd\x00\
+    ofdmdigfilttype=18\x00\
+    ofdmdigfilttypebe=18\x00\
+    papdmode=1\x00\
+    papdvalidtest=1\x00\
+    pacalidx2g=45\x00\
+    papdepsoffset=-30\x00\
+    papdendidx=58\x00\
+    ltecxmux=0\x00\
+    ltecxpadnum=0x0102\x00\
+    ltecxfnsel=0x44\x00\
+    ltecxgcigpio=0x01\x00\
+    il0macaddr=00:90:4c:c5:12:38\x00\
+    wl0id=0x431b\x00\
+    deadman_to=0xffffffff\x00\
+    muxenab=0x100\x00\
+    spurconfig=0x3\x00\
+    glitch_based_crsmin=1\x00\
+    btc_mode=1\x00\x00\x00";
