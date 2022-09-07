@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 defmt = ["dep:defmt"]
 log = ["dep:log"]
+fix_fw = []
 
 [dependencies]
 embassy-time = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1fb6bfbec943742fb25e70391278bf4a4b638772" }

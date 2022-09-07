@@ -7,6 +7,7 @@ pub(crate) mod fmt;
 
 mod countries;
 mod events;
+pub mod firmware;
 mod structs;
 
 use core::cell::Cell;
