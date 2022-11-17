@@ -23,7 +23,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{block_for, Duration, Timer};
 use embedded_hal_1::digital::OutputPin;
-use embedded_hal_1::spi::{SpiBus, SpiBusRead, SpiBusWrite, SpiDevice};
+use embedded_hal_1::spi::{SpiBusRead, SpiBusWrite, SpiDevice};
 
 use self::structs::*;
 use crate::events::Event;
@@ -815,7 +815,6 @@ where
         let cmd = cmd_word(WRITE, INC_ADDR, FUNC_WLAN, 0, total_len as _);
         self.spi
             .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
                 bus.write(&[cmd])?;
                 bus.write(&buf[..(total_len / 4)])?;
                 Ok(())
@@ -1008,7 +1007,6 @@ where
 
         self.spi
             .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
                 bus.write(&[cmd])?;
                 bus.write(&buf[..total_len / 4])?;
                 Ok(())
@@ -1094,7 +1092,6 @@ where
 
             self.spi
                 .transaction(|bus| {
-                    let bus = unsafe { &mut *bus };
                     bus.write(&[cmd])?;
 
                     // 4-byte response delay.
@@ -1136,7 +1133,6 @@ where
 
             self.spi
                 .transaction(|bus| {
-                    let bus = unsafe { &mut *bus };
                     bus.write(&[cmd])?;
                     bus.write(&buf[..(len + 3) / 4])?;
                     Ok(())
@@ -1257,7 +1253,6 @@ where
 
         self.spi
             .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
                 bus.write(&[cmd])?;
                 if func == FUNC_BACKPLANE {
                     // 4-byte response delay.
@@ -1276,7 +1271,6 @@ where
 
         self.spi
             .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
                 bus.write(&[cmd, val])?;
                 Ok(())
             })
@@ -1289,7 +1283,6 @@ where
 
         self.spi
             .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
                 bus.write(&[swap16(cmd)])?;
                 bus.read(&mut buf)?;
                 Ok(())
@@ -1304,7 +1297,6 @@ where
 
         self.spi
             .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
                 bus.write(&[swap16(cmd), swap16(val)])?;
                 Ok(())
             })
