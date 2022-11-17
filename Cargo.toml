@@ -12,7 +12,7 @@ fix_fw = []
 embassy-time = { version = "0.1.0" }
 embassy-sync = { version = "0.1.0" }
 embassy-futures = { version = "0.1.0" }
-embassy-net = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "embassy-time-v0.1.0" }
+embassy-net = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "2528f451387e6c7b27c3140cd87d47521d1971a2" }
 
 atomic-polyfill = "0.1.5"
 
