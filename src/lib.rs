@@ -22,8 +22,8 @@ use embassy_net::{PacketBoxExt, PacketBuf};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{block_for, Duration, Timer};
-use embedded_hal_1::digital::blocking::OutputPin;
-use embedded_hal_1::spi::blocking::{SpiBus, SpiBusRead, SpiBusWrite, SpiDevice};
+use embedded_hal_1::digital::OutputPin;
+use embedded_hal_1::spi::{SpiBus, SpiBusRead, SpiBusWrite, SpiDevice};
 
 use self::structs::*;
 use crate::events::Event;
@@ -41,91 +41,122 @@ fn slice8_mut(x: &mut [u32]) -> &mut [u8] {
     unsafe { slice::from_raw_parts_mut(x.as_mut_ptr() as _, len) }
 }
 
-const FUNC_BUS: u32 = 0;
-const FUNC_BACKPLANE: u32 = 1;
-const FUNC_WLAN: u32 = 2;
-const FUNC_BT: u32 = 3;
+mod constants {
+    #![allow(unused)]
+    pub(crate) const FUNC_BUS: u32 = 0;
+    pub(crate) const FUNC_BACKPLANE: u32 = 1;
+    pub(crate) const FUNC_WLAN: u32 = 2;
+    pub(crate) const FUNC_BT: u32 = 3;
 
-const REG_BUS_CTRL: u32 = 0x0;
-const REG_BUS_INTERRUPT: u32 = 0x04; // 16 bits - Interrupt status
-const REG_BUS_INTERRUPT_ENABLE: u32 = 0x06; // 16 bits - Interrupt mask
-const REG_BUS_STATUS: u32 = 0x8;
-const REG_BUS_TEST_RO: u32 = 0x14;
-const REG_BUS_TEST_RW: u32 = 0x18;
-const REG_BUS_RESP_DELAY: u32 = 0x1c;
-const WORD_LENGTH_32: u32 = 0x1;
-const HIGH_SPEED: u32 = 0x10;
+    pub(crate) const REG_BUS_CTRL: u32 = 0x0;
+    pub(crate) const REG_BUS_INTERRUPT: u32 = 0x04; // 16 bits - Interrupt status
+    pub(crate) const REG_BUS_INTERRUPT_ENABLE: u32 = 0x06; // 16 bits - Interrupt mask
+    pub(crate) const REG_BUS_STATUS: u32 = 0x8;
+    pub(crate) const REG_BUS_TEST_RO: u32 = 0x14;
+    pub(crate) const REG_BUS_TEST_RW: u32 = 0x18;
+    pub(crate) const REG_BUS_RESP_DELAY: u32 = 0x1c;
+    pub(crate) const WORD_LENGTH_32: u32 = 0x1;
+    pub(crate) const HIGH_SPEED: u32 = 0x10;
 
-// SPI_STATUS_REGISTER bits
-const STATUS_DATA_NOT_AVAILABLE: u32 = 0x00000001;
-const STATUS_UNDERFLOW: u32 = 0x00000002;
-const STATUS_OVERFLOW: u32 = 0x00000004;
-const STATUS_F2_INTR: u32 = 0x00000008;
-const STATUS_F3_INTR: u32 = 0x00000010;
-const STATUS_F2_RX_READY: u32 = 0x00000020;
-const STATUS_F3_RX_READY: u32 = 0x00000040;
-const STATUS_HOST_CMD_DATA_ERR: u32 = 0x00000080;
-const STATUS_F2_PKT_AVAILABLE: u32 = 0x00000100;
-const STATUS_F2_PKT_LEN_MASK: u32 = 0x000FFE00;
-const STATUS_F2_PKT_LEN_SHIFT: u32 = 9;
-const STATUS_F3_PKT_AVAILABLE: u32 = 0x00100000;
-const STATUS_F3_PKT_LEN_MASK: u32 = 0xFFE00000;
-const STATUS_F3_PKT_LEN_SHIFT: u32 = 21;
+    // SPI_STATUS_REGISTER bits
+    pub(crate) const STATUS_DATA_NOT_AVAILABLE: u32 = 0x00000001;
+    pub(crate) const STATUS_UNDERFLOW: u32 = 0x00000002;
+    pub(crate) const STATUS_OVERFLOW: u32 = 0x00000004;
+    pub(crate) const STATUS_F2_INTR: u32 = 0x00000008;
+    pub(crate) const STATUS_F3_INTR: u32 = 0x00000010;
+    pub(crate) const STATUS_F2_RX_READY: u32 = 0x00000020;
+    pub(crate) const STATUS_F3_RX_READY: u32 = 0x00000040;
+    pub(crate) const STATUS_HOST_CMD_DATA_ERR: u32 = 0x00000080;
+    pub(crate) const STATUS_F2_PKT_AVAILABLE: u32 = 0x00000100;
+    pub(crate) const STATUS_F2_PKT_LEN_MASK: u32 = 0x000FFE00;
+    pub(crate) const STATUS_F2_PKT_LEN_SHIFT: u32 = 9;
+    pub(crate) const STATUS_F3_PKT_AVAILABLE: u32 = 0x00100000;
+    pub(crate) const STATUS_F3_PKT_LEN_MASK: u32 = 0xFFE00000;
+    pub(crate) const STATUS_F3_PKT_LEN_SHIFT: u32 = 21;
 
-const REG_BACKPLANE_GPIO_SELECT: u32 = 0x10005;
-const REG_BACKPLANE_GPIO_OUTPUT: u32 = 0x10006;
-const REG_BACKPLANE_GPIO_ENABLE: u32 = 0x10007;
-const REG_BACKPLANE_FUNCTION2_WATERMARK: u32 = 0x10008;
-const REG_BACKPLANE_DEVICE_CONTROL: u32 = 0x10009;
-const REG_BACKPLANE_BACKPLANE_ADDRESS_LOW: u32 = 0x1000A;
-const REG_BACKPLANE_BACKPLANE_ADDRESS_MID: u32 = 0x1000B;
-const REG_BACKPLANE_BACKPLANE_ADDRESS_HIGH: u32 = 0x1000C;
-const REG_BACKPLANE_FRAME_CONTROL: u32 = 0x1000D;
-const REG_BACKPLANE_CHIP_CLOCK_CSR: u32 = 0x1000E;
-const REG_BACKPLANE_PULL_UP: u32 = 0x1000F;
-const REG_BACKPLANE_READ_FRAME_BC_LOW: u32 = 0x1001B;
-const REG_BACKPLANE_READ_FRAME_BC_HIGH: u32 = 0x1001C;
-const REG_BACKPLANE_WAKEUP_CTRL: u32 = 0x1001E;
-const REG_BACKPLANE_SLEEP_CSR: u32 = 0x1001F;
+    pub(crate) const REG_BACKPLANE_GPIO_SELECT: u32 = 0x10005;
+    pub(crate) const REG_BACKPLANE_GPIO_OUTPUT: u32 = 0x10006;
+    pub(crate) const REG_BACKPLANE_GPIO_ENABLE: u32 = 0x10007;
+    pub(crate) const REG_BACKPLANE_FUNCTION2_WATERMARK: u32 = 0x10008;
+    pub(crate) const REG_BACKPLANE_DEVICE_CONTROL: u32 = 0x10009;
+    pub(crate) const REG_BACKPLANE_BACKPLANE_ADDRESS_LOW: u32 = 0x1000A;
+    pub(crate) const REG_BACKPLANE_BACKPLANE_ADDRESS_MID: u32 = 0x1000B;
+    pub(crate) const REG_BACKPLANE_BACKPLANE_ADDRESS_HIGH: u32 = 0x1000C;
+    pub(crate) const REG_BACKPLANE_FRAME_CONTROL: u32 = 0x1000D;
+    pub(crate) const REG_BACKPLANE_CHIP_CLOCK_CSR: u32 = 0x1000E;
+    pub(crate) const REG_BACKPLANE_PULL_UP: u32 = 0x1000F;
+    pub(crate) const REG_BACKPLANE_READ_FRAME_BC_LOW: u32 = 0x1001B;
+    pub(crate) const REG_BACKPLANE_READ_FRAME_BC_HIGH: u32 = 0x1001C;
+    pub(crate) const REG_BACKPLANE_WAKEUP_CTRL: u32 = 0x1001E;
+    pub(crate) const REG_BACKPLANE_SLEEP_CSR: u32 = 0x1001F;
 
-const BACKPLANE_WINDOW_SIZE: usize = 0x8000;
-const BACKPLANE_ADDRESS_MASK: u32 = 0x7FFF;
-const BACKPLANE_ADDRESS_32BIT_FLAG: u32 = 0x08000;
-const BACKPLANE_MAX_TRANSFER_SIZE: usize = 64;
+    pub(crate) const BACKPLANE_WINDOW_SIZE: usize = 0x8000;
+    pub(crate) const BACKPLANE_ADDRESS_MASK: u32 = 0x7FFF;
+    pub(crate) const BACKPLANE_ADDRESS_32BIT_FLAG: u32 = 0x08000;
+    pub(crate) const BACKPLANE_MAX_TRANSFER_SIZE: usize = 64;
+    // Active Low Power (ALP) clock constants
+    pub(crate) const BACKPLANE_ALP_AVAIL_REQ: u8 = 0x08;
+    pub(crate) const BACKPLANE_ALP_AVAIL: u8 = 0x40;
 
-// Broadcom AMBA (Advanced Microcontroller Bus Architecture) Interconnect (AI)
-// constants
-const AI_IOCTRL_OFFSET: u32 = 0x408;
-const AI_IOCTRL_BIT_FGC: u8 = 0x0002;
-const AI_IOCTRL_BIT_CLOCK_EN: u8 = 0x0001;
-const AI_IOCTRL_BIT_CPUHALT: u8 = 0x0020;
+    // Broadcom AMBA (Advanced Microcontroller Bus Architecture) Interconnect
+    // (AI) pub (crate) constants
+    pub(crate) const AI_IOCTRL_OFFSET: u32 = 0x408;
+    pub(crate) const AI_IOCTRL_BIT_FGC: u8 = 0x0002;
+    pub(crate) const AI_IOCTRL_BIT_CLOCK_EN: u8 = 0x0001;
+    pub(crate) const AI_IOCTRL_BIT_CPUHALT: u8 = 0x0020;
 
-const AI_RESETCTRL_OFFSET: u32 = 0x800;
-const AI_RESETCTRL_BIT_RESET: u8 = 1;
+    pub(crate) const AI_RESETCTRL_OFFSET: u32 = 0x800;
+    pub(crate) const AI_RESETCTRL_BIT_RESET: u8 = 1;
 
-const AI_RESETSTATUS_OFFSET: u32 = 0x804;
+    pub(crate) const AI_RESETSTATUS_OFFSET: u32 = 0x804;
 
-const TEST_PATTERN: u32 = 0x12345678;
-const FEEDBEAD: u32 = 0xFEEDBEAD;
+    pub(crate) const TEST_PATTERN: u32 = 0x12345678;
+    pub(crate) const FEEDBEAD: u32 = 0xFEEDBEAD;
 
-// SPI_INTERRUPT_REGISTER and SPI_INTERRUPT_ENABLE_REGISTER Bits
-const IRQ_DATA_UNAVAILABLE: u16 = 0x0001; // Requested data not available; Clear by writing a "1"
-const IRQ_F2_F3_FIFO_RD_UNDERFLOW: u16 = 0x0002;
-const IRQ_F2_F3_FIFO_WR_OVERFLOW: u16 = 0x0004;
-const IRQ_COMMAND_ERROR: u16 = 0x0008; // Cleared by writing 1
-const IRQ_DATA_ERROR: u16 = 0x0010; // Cleared by writing 1
-const IRQ_F2_PACKET_AVAILABLE: u16 = 0x0020;
-const IRQ_F3_PACKET_AVAILABLE: u16 = 0x0040;
-const IRQ_F1_OVERFLOW: u16 = 0x0080; // Due to last write. Bkplane has pending write requests
-const IRQ_MISC_INTR0: u16 = 0x0100;
-const IRQ_MISC_INTR1: u16 = 0x0200;
-const IRQ_MISC_INTR2: u16 = 0x0400;
-const IRQ_MISC_INTR3: u16 = 0x0800;
-const IRQ_MISC_INTR4: u16 = 0x1000;
-const IRQ_F1_INTR: u16 = 0x2000;
-const IRQ_F2_INTR: u16 = 0x4000;
-const IRQ_F3_INTR: u16 = 0x8000;
+    // SPI_INTERRUPT_REGISTER and SPI_INTERRUPT_ENABLE_REGISTER Bits
+    pub(crate) const IRQ_DATA_UNAVAILABLE: u16 = 0x0001; // Requested data not available; Clear by writing a "1"
+    pub(crate) const IRQ_F2_F3_FIFO_RD_UNDERFLOW: u16 = 0x0002;
+    pub(crate) const IRQ_F2_F3_FIFO_WR_OVERFLOW: u16 = 0x0004;
+    pub(crate) const IRQ_COMMAND_ERROR: u16 = 0x0008; // Cleared by writing 1
+    pub(crate) const IRQ_DATA_ERROR: u16 = 0x0010; // Cleared by writing 1
+    pub(crate) const IRQ_F2_PACKET_AVAILABLE: u16 = 0x0020;
+    pub(crate) const IRQ_F3_PACKET_AVAILABLE: u16 = 0x0040;
+    pub(crate) const IRQ_F1_OVERFLOW: u16 = 0x0080; // Due to last write. Bkplane has pending write requests
+    pub(crate) const IRQ_MISC_INTR0: u16 = 0x0100;
+    pub(crate) const IRQ_MISC_INTR1: u16 = 0x0200;
+    pub(crate) const IRQ_MISC_INTR2: u16 = 0x0400;
+    pub(crate) const IRQ_MISC_INTR3: u16 = 0x0800;
+    pub(crate) const IRQ_MISC_INTR4: u16 = 0x1000;
+    pub(crate) const IRQ_F1_INTR: u16 = 0x2000;
+    pub(crate) const IRQ_F2_INTR: u16 = 0x4000;
+    pub(crate) const IRQ_F3_INTR: u16 = 0x8000;
 
+    pub(crate) const IOCTL_CMD_UP: u32 = 2;
+    pub(crate) const IOCTL_CMD_SET_SSID: u32 = 26;
+    pub(crate) const IOCTL_CMD_ANTDIV: u32 = 64;
+    pub(crate) const IOCTL_CMD_SET_VAR: u32 = 263;
+    pub(crate) const IOCTL_CMD_GET_VAR: u32 = 262;
+    pub(crate) const IOCTL_CMD_SET_PASSPHRASE: u32 = 268;
+
+    pub(crate) const CHANNEL_TYPE_CONTROL: u8 = 0;
+    pub(crate) const CHANNEL_TYPE_EVENT: u8 = 1;
+    pub(crate) const CHANNEL_TYPE_DATA: u8 = 2;
+
+    // CYW_SPID command structure constants.
+    pub(crate) const WRITE: bool = true;
+    pub(crate) const READ: bool = false;
+    pub(crate) const INC_ADDR: bool = true;
+    pub(crate) const FIXED_ADDR: bool = false;
+}
+use crate::constants::*;
+
+#[derive(Clone, Copy)]
+pub enum IoctlType {
+    Get = 0,
+    Set = 2,
+}
+
+#[allow(unused)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Core {
     WLAN = 0,
@@ -143,6 +174,7 @@ impl Core {
     }
 }
 
+#[allow(unused)]
 struct Chip {
     arm_core_base_address: u32,
     socsram_base_address: u32,
@@ -199,7 +231,7 @@ enum IoctlState {
     Idle,
 
     Pending {
-        kind: u32,
+        kind: IoctlType,
         cmd: u32,
         iface: u32,
         buf: *mut [u8],
@@ -263,7 +295,8 @@ impl<'a> Control<'a> {
             buf[0..8].copy_from_slice(b"clmload\x00");
             buf[8..20].copy_from_slice(&header.to_bytes());
             buf[20..][..chunk.len()].copy_from_slice(&chunk);
-            self.ioctl(2, 263, 0, &mut buf[..8 + 12 + chunk.len()]).await;
+            self.ioctl(IoctlType::Set, IOCTL_CMD_SET_VAR, 0, &mut buf[..8 + 12 + chunk.len()])
+                .await;
         }
 
         // check clmload ok
@@ -271,6 +304,9 @@ impl<'a> Control<'a> {
 
         info!("Configuring misc stuff...");
 
+        // Disable tx gloming which transfers multiple packets in one request.
+        // 'glom' is short for "conglomerate" which means "gather together into
+        // a compact mass".
         self.set_iovar_u32("bus:txglom", 0).await;
         self.set_iovar_u32("apsta", 1).await;
 
@@ -290,19 +326,20 @@ impl<'a> Control<'a> {
         // set country takes some time, next ioctls fail if we don't wait.
         Timer::after(Duration::from_millis(100)).await;
 
-        self.ioctl_set_u32(64, 0, 0).await; // WLC_SET_ANTDIV
+        // Set antenna to chip antenna
+        self.ioctl_set_u32(IOCTL_CMD_ANTDIV, 0, 0).await;
 
         self.set_iovar_u32("bus:txglom", 0).await;
         Timer::after(Duration::from_millis(100)).await;
         //self.set_iovar_u32("apsta", 1).await; // this crashes, also we already did it before...??
-        Timer::after(Duration::from_millis(100)).await;
+        //Timer::after(Duration::from_millis(100)).await;
         self.set_iovar_u32("ampdu_ba_wsize", 8).await;
         Timer::after(Duration::from_millis(100)).await;
         self.set_iovar_u32("ampdu_mpdu", 4).await;
         Timer::after(Duration::from_millis(100)).await;
         //self.set_iovar_u32("ampdu_rx_factor", 0).await; // this crashes
 
-        Timer::after(Duration::from_millis(100)).await;
+        //Timer::after(Duration::from_millis(100)).await;
 
         // evts
         let mut evts = EventMask {
@@ -323,7 +360,7 @@ impl<'a> Control<'a> {
         Timer::after(Duration::from_millis(100)).await;
 
         // set wifi up
-        self.ioctl(2, 2, 0, &mut []).await;
+        self.ioctl(IoctlType::Set, IOCTL_CMD_UP, 0, &mut []).await;
 
         Timer::after(Duration::from_millis(100)).await;
 
@@ -360,7 +397,8 @@ impl<'a> Control<'a> {
             ssid: [0; 32],
         };
         i.ssid[..ssid.len()].copy_from_slice(ssid.as_bytes());
-        self.ioctl(2, 26, 0, &mut i.to_bytes()).await; // set_ssid
+        self.ioctl(IoctlType::Set, IOCTL_CMD_SET_SSID, 0, &mut i.to_bytes())
+            .await; // set_ssid
 
         info!("JOINED");
     }
@@ -381,7 +419,8 @@ impl<'a> Control<'a> {
             passphrase: [0; 64],
         };
         pfi.passphrase[..passphrase.len()].copy_from_slice(passphrase.as_bytes());
-        self.ioctl(2, 268, 0, &mut pfi.to_bytes()).await; // WLC_SET_WSEC_PMK
+        self.ioctl(IoctlType::Set, IOCTL_CMD_SET_PASSPHRASE, 0, &mut pfi.to_bytes())
+            .await; // WLC_SET_WSEC_PMK
 
         self.ioctl_set_u32(20, 0, 1).await; // set_infra = 1
         self.ioctl_set_u32(22, 0, 0).await; // set_auth = 0 (open)
@@ -392,7 +431,7 @@ impl<'a> Control<'a> {
             ssid: [0; 32],
         };
         i.ssid[..ssid.len()].copy_from_slice(ssid.as_bytes());
-        self.ioctl(2, 26, 0, &mut i.to_bytes()).await; // set_ssid
+        self.ioctl(IoctlType::Set, 26, 0, &mut i.to_bytes()).await; // set_ssid
 
         info!("JOINED");
     }
@@ -430,7 +469,8 @@ impl<'a> Control<'a> {
         buf[name.len() + 1..][..val.len()].copy_from_slice(val);
 
         let total_len = name.len() + 1 + val.len();
-        self.ioctl(2, 263, 0, &mut buf[..total_len]).await;
+        self.ioctl(IoctlType::Set, IOCTL_CMD_SET_VAR, 0, &mut buf[..total_len])
+            .await;
     }
 
     // TODO this is not really working, it always returns all zeros.
@@ -442,7 +482,9 @@ impl<'a> Control<'a> {
         buf[name.len()] = 0;
 
         let total_len = max(name.len() + 1, res.len());
-        let res_len = self.ioctl(0, 262, 0, &mut buf[..total_len]).await;
+        let res_len = self
+            .ioctl(IoctlType::Get, IOCTL_CMD_GET_VAR, 0, &mut buf[..total_len])
+            .await;
 
         let out_len = min(res.len(), res_len);
         res[..out_len].copy_from_slice(&buf[..out_len]);
@@ -451,10 +493,10 @@ impl<'a> Control<'a> {
 
     async fn ioctl_set_u32(&mut self, cmd: u32, iface: u32, val: u32) {
         let mut buf = val.to_le_bytes();
-        self.ioctl(2, cmd, 0, &mut buf).await;
+        self.ioctl(IoctlType::Set, cmd, iface, &mut buf).await;
     }
 
-    async fn ioctl(&mut self, kind: u32, cmd: u32, iface: u32, buf: &mut [u8]) -> usize {
+    async fn ioctl(&mut self, kind: IoctlType, cmd: u32, iface: u32, buf: &mut [u8]) -> usize {
         // TODO cancel ioctl on future drop.
 
         while !matches!(self.state.ioctl_state.get(), IoctlState::Idle) {
@@ -596,10 +638,11 @@ where
         // seems to break backplane??? eat the 4-byte delay instead, that's what the vendor drivers do...
         //self.write32(FUNC_BUS, REG_BUS_RESP_DELAY, 0).await;
 
-        // Init ALP (no idea what that stands for) clock
-        self.write8(FUNC_BACKPLANE, REG_BACKPLANE_CHIP_CLOCK_CSR, 0x08).await;
+        // Init ALP (Active Low Power) clock
+        self.write8(FUNC_BACKPLANE, REG_BACKPLANE_CHIP_CLOCK_CSR, BACKPLANE_ALP_AVAIL_REQ)
+            .await;
         info!("waiting for clock...");
-        while self.read8(FUNC_BACKPLANE, REG_BACKPLANE_CHIP_CLOCK_CSR).await & 0x40 == 0 {}
+        while self.read8(FUNC_BACKPLANE, REG_BACKPLANE_CHIP_CLOCK_CSR).await & BACKPLANE_ALP_AVAIL == 0 {}
         info!("clock ok");
 
         let chip_id = self.bp_read16(0x1800_0000).await;
@@ -708,7 +751,7 @@ where
                 if status & STATUS_F2_PKT_AVAILABLE != 0 {
                     let len = (status & STATUS_F2_PKT_LEN_MASK) >> STATUS_F2_PKT_LEN_SHIFT;
 
-                    let cmd = cmd_word(false, true, FUNC_WLAN, 0, len);
+                    let cmd = cmd_word(READ, INC_ADDR, FUNC_WLAN, 0, len);
 
                     self.spi
                         .transaction(|bus| {
@@ -744,7 +787,7 @@ where
             len: total_len as u16, // TODO does this len need to be rounded up to u32?
             len_inv: !total_len as u16,
             sequence: seq,
-            channel_and_flags: 2, // data channel
+            channel_and_flags: CHANNEL_TYPE_DATA,
             next_length: 0,
             header_length: SdpcmHeader::SIZE as _,
             wireless_flow_control: 0,
@@ -753,7 +796,7 @@ where
         };
 
         let bcd_header = BcdHeader {
-            flags: 0x20,
+            flags: BDC_VERSION << BDC_VERSION_SHIFT,
             priority: 0,
             flags2: 0,
             data_offset: 0,
@@ -769,7 +812,7 @@ where
 
         trace!("    {:02x}", &buf8[..total_len.min(48)]);
 
-        let cmd = cmd_word(true, true, FUNC_WLAN, 0, total_len as _);
+        let cmd = cmd_word(WRITE, INC_ADDR, FUNC_WLAN, 0, total_len as _);
         self.spi
             .transaction(|bus| {
                 let bus = unsafe { &mut *bus };
@@ -805,7 +848,7 @@ where
         let payload = &packet[sdpcm_header.header_length as _..];
 
         match channel {
-            0 => {
+            CHANNEL_TYPE_CONTROL => {
                 if payload.len() < CdcHeader::SIZE {
                     warn!("payload too short, len={}", payload.len());
                     return;
@@ -826,7 +869,7 @@ where
                     }
                 }
             }
-            1 => {
+            CHANNEL_TYPE_EVENT => {
                 let bcd_header = BcdHeader::from_bytes(&payload[..BcdHeader::SIZE].try_into().unwrap());
                 trace!("    {:?}", bcd_header);
 
@@ -883,7 +926,7 @@ where
                     evt_data
                 );
             }
-            2 => {
+            CHANNEL_TYPE_DATA => {
                 let bcd_header = BcdHeader::from_bytes(&payload[..BcdHeader::SIZE].try_into().unwrap());
                 trace!("    {:?}", bcd_header);
 
@@ -910,18 +953,18 @@ where
     fn update_credit(&mut self, sdpcm_header: &SdpcmHeader) {
         if sdpcm_header.channel_and_flags & 0xf < 3 {
             let mut sdpcm_seq_max = sdpcm_header.bus_data_credit;
-            if sdpcm_seq_max - self.sdpcm_seq > 0x40 {
+            if sdpcm_seq_max.wrapping_sub(self.sdpcm_seq) > 0x40 {
                 sdpcm_seq_max = self.sdpcm_seq + 2;
             }
             self.sdpcm_seq_max = sdpcm_seq_max;
         }
     }
 
-    fn has_credit(&mut self) -> bool {
+    fn has_credit(&self) -> bool {
         self.sdpcm_seq != self.sdpcm_seq_max && self.sdpcm_seq_max.wrapping_sub(self.sdpcm_seq) & 0x80 == 0
     }
 
-    async fn send_ioctl(&mut self, kind: u32, cmd: u32, iface: u32, data: &[u8]) {
+    async fn send_ioctl(&mut self, kind: IoctlType, cmd: u32, iface: u32, data: &[u8]) {
         let mut buf = [0; 512];
         let buf8 = slice8_mut(&mut buf);
 
@@ -935,7 +978,7 @@ where
             len: total_len as u16, // TODO does this len need to be rounded up to u32?
             len_inv: !total_len as u16,
             sequence: sdpcm_seq,
-            channel_and_flags: 0, // control channel
+            channel_and_flags: CHANNEL_TYPE_CONTROL,
             next_length: 0,
             header_length: SdpcmHeader::SIZE as _,
             wireless_flow_control: 0,
@@ -961,7 +1004,7 @@ where
 
         trace!("    {:02x}", &buf8[..total_len.min(48)]);
 
-        let cmd = cmd_word(true, true, FUNC_WLAN, 0, total_len as _);
+        let cmd = cmd_word(WRITE, INC_ADDR, FUNC_WLAN, 0, total_len as _);
 
         self.spi
             .transaction(|bus| {
@@ -1030,6 +1073,7 @@ where
         true
     }
 
+    #[allow(unused)]
     async fn bp_read(&mut self, mut addr: u32, mut data: &mut [u32]) {
         // It seems the HW force-aligns the addr
         // to 2 if data.len() >= 2
@@ -1046,7 +1090,7 @@ where
 
             self.backplane_set_window(addr).await;
 
-            let cmd = cmd_word(false, true, FUNC_BACKPLANE, window_offs, len as u32);
+            let cmd = cmd_word(READ, INC_ADDR, FUNC_BACKPLANE, window_offs, len as u32);
 
             self.spi
                 .transaction(|bus| {
@@ -1088,7 +1132,7 @@ where
 
             self.backplane_set_window(addr).await;
 
-            let cmd = cmd_word(true, true, FUNC_BACKPLANE, window_offs, len as u32);
+            let cmd = cmd_word(WRITE, INC_ADDR, FUNC_BACKPLANE, window_offs, len as u32);
 
             self.spi
                 .transaction(|bus| {
@@ -1117,10 +1161,12 @@ where
         self.backplane_readn(addr, 2).await as u16
     }
 
+    #[allow(unused)]
     async fn bp_write16(&mut self, addr: u32, val: u16) {
         self.backplane_writen(addr, val as u32, 2).await
     }
 
+    #[allow(unused)]
     async fn bp_read32(&mut self, addr: u32) -> u32 {
         self.backplane_readn(addr, 4).await
     }
@@ -1191,6 +1237,7 @@ where
         self.readn(func, addr, 2).await as u16
     }
 
+    #[allow(unused)]
     async fn write16(&mut self, func: u32, addr: u32, val: u16) {
         self.writen(func, addr, val as u32, 2).await
     }
@@ -1199,12 +1246,13 @@ where
         self.readn(func, addr, 4).await
     }
 
+    #[allow(unused)]
     async fn write32(&mut self, func: u32, addr: u32, val: u32) {
         self.writen(func, addr, val, 4).await
     }
 
     async fn readn(&mut self, func: u32, addr: u32, len: u32) -> u32 {
-        let cmd = cmd_word(false, true, func, addr, len);
+        let cmd = cmd_word(READ, INC_ADDR, func, addr, len);
         let mut buf = [0; 1];
 
         self.spi
@@ -1236,7 +1284,7 @@ where
     }
 
     async fn read32_swapped(&mut self, addr: u32) -> u32 {
-        let cmd = cmd_word(false, true, FUNC_BUS, addr, 4);
+        let cmd = cmd_word(READ, INC_ADDR, FUNC_BUS, addr, 4);
         let mut buf = [0; 1];
 
         self.spi
@@ -1252,7 +1300,7 @@ where
     }
 
     async fn write32_swapped(&mut self, addr: u32, val: u32) {
-        let cmd = cmd_word(true, true, FUNC_BUS, addr, 4);
+        let cmd = cmd_word(WRITE, INC_ADDR, FUNC_BUS, addr, 4);
 
         self.spi
             .transaction(|bus| {

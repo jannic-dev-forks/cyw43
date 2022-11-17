@@ -9,10 +9,10 @@ log = ["dep:log"]
 fix_fw = []
 
 [dependencies]
-embassy-time = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1fb6bfbec943742fb25e70391278bf4a4b638772" }
-embassy-sync = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1fb6bfbec943742fb25e70391278bf4a4b638772" }
+embassy-time = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "c53614f057cd7d9ac6e86aebd1fb6c1a1055d8b6" }
+embassy-sync = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "c53614f057cd7d9ac6e86aebd1fb6c1a1055d8b6" }
 embassy-futures = { version = "0.1.0" }
-embassy-net = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "1fb6bfbec943742fb25e70391278bf4a4b638772" }
+embassy-net = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy.git", rev = "c53614f057cd7d9ac6e86aebd1fb6c1a1055d8b6" }
 
 atomic-polyfill = "0.1.5"
 
@@ -21,7 +21,7 @@ log = { version = "0.4.17", optional = true }
 
 futures = { version = "0.3.17", default-features = false, features = ["async-await", "cfg-target-has-atomic", "unstable"] }
 
-embedded-hal-1 = { package = "embedded-hal", version = "1.0.0-alpha.8" }
+embedded-hal-1 = { package = "embedded-hal", version = "1.0.0-alpha.9" }
 num_enum = { version = "0.5.7", default-features = false }
 
 [dev-dependencies]
